@@ -1,2 +1,3 @@
-# buildpack-google-cloud-gcsfuse
-Add the Google Cloud gcsfuse tool.
+# buildpack-google-cloud-gscfuse
+
+Install the Google Cloud gcsfuse tool.
