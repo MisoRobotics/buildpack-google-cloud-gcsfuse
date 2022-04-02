@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -x
+
+set -euo pipefail
+
+layers_dir="$1"
+env_dir="$2/env"
+plan_dir="$3"
+
+go_dir="${layers_dir}/go"
+gcsfuse_dir="${layers_dir}/google-cloud-gcsfuse"
+mkdir -p "${go_dir}" "${gcsfuse_dir}"
+
+cache_dir="${layers_dir}/cache"
+
+mkdir -p "${cache_dir}"
+echo -e '[types]\ncache = true' >"${layers_dir}/cache.toml"
+
+#########################
+echo "---> Installing libfuse"
+
+default_fuse_version="2.9.9"
+if [ -r "${env_dir}/FUSE_VERSION" ]; then
+	fuse_version="$(cat "${env_dir}/FUSE_VERSION")"
+else
+	fuse_version="${default_fuse_version}"
+fi
+
+existing_version="none"
+if [ -r "${cache_dir}/FUSE_VERSION" ]; then
+	existing_version="$(cat "${cache_dir}/FUSE_VERSION")"
+fi
+
+local_file="fuse.tar.gz"
+if [[ -r "${cache_dir}/${local_file}" && "${existing_version}" == "${go_version}" ]]; then
+	echo "Found golang v${existing_version} in cache, skipping download"
+else
+	echo "---> Downloading fuse v${fuse_version} to cache"
+	remote_file="https://github.com/libfuse/libfuse/releases/download/fuse-${fuse_version}/fuse-${fuse_version}.tar.gz"
+	curl -fSLo "${cache_dir}/${local_file}" ${remote_file}
+	echo -n "${fuse_version}" >"${cache_dir}/FUSE_VERSION"
+fi
+
+echo "---> Unarchiving fuse v${fuse_version}"
+mkdir "${cache_dir}/fuse"
+tar -xzf "${cache_dir}/${local_file}" -C "${cache_dir}/fuse" --strip-components=1
+
+echo "---> Building fuse v${fuse_version}"
+cd "${cache_dir}/fuse"
+./configure --prefix="${gcsfuse_dir}"
+make -j"$(nproc)"
+make install
+cd
+
+#########################
+echo "---> Installing golang"
+
+default_go_version="1.18"
+if [ -r "${env_dir}/GO_VERSION" ]; then
+	go_version="$(cat "${env_dir}/GO_VERSION")"
+else
+	go_version="${default_go_version}"
+fi
+
+existing_version="none"
+if [ -r "${cache_dir}/GO_VERSION" ]; then
+	existing_version="$(cat "${cache_dir}/GO_VERSION")"
+fi
+
+local_file="go.linux-amd64.tar.gz"
+if [[ -r "${cache_dir}/${local_file}" && "${existing_version}" == "${go_version}" ]]; then
+	echo "Found golang v${existing_version} in cache, skipping download"
+else
+	echo "---> Downloading golang v${go_version} to cache"
+	curl -fSLo "${cache_dir}/${local_file}" "https://go.dev/dl/go${go_version}.linux-amd64.tar.gz"
+	echo -n "${go_version}" >"${cache_dir}/GO_VERSION"
+fi
+
+echo "---> Unarchiving golang v${go_version}"
+tar -xzf "${cache_dir}/${local_file}" -C "${go_dir}" --strip-components=1
+export GOROOT="${go_dir}"
+export PATH="${PATH:+${PATH}:}${go_dir}/bin"
+
+echo "----> Configuring layer for go"
+echo -e '[types]\nbuild = true\ncache = true' >"${layers_dir}/go.toml"
+
+#########################
+
+echo "---> Installing gcsfuse"
+default_gcsfuse_version="0.40.0"
+if [ -r "${env_dir}/GCSFUSE_VERSION" ]; then
+	gcsfuse_version="$(cat "${env_dir}/GCSFUSE_VERSION")"
+else
+	gcsfuse_version="${default_gcsfuse_version}"
+fi
+
+# existing_version="none"
+# if [ -r "${cache_dir}/GCSFUSE_VERSION" ]; then
+# 	existing_version="$(cat "${cache_dir}/GCSFUSE_VERSION")"
+# fi
+
+# if [[ -r "${cache_dir}/${local_file}" && "${existing_version}" == "${gcsfuse_version}" ]]; then
+# 	echo "Found gcsfuse v${existing_version} in cache, skipping download"
+# else
+# 	echo "---> Downloading google-cloud-sdk v${gcsfuse_version} to cache"
+# 	curl -fSo "${cache_dir}/${local_file}" "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/${download_file}"
+# 	echo -n "${gcsfuse_version}" >"${cache_dir}/GCSFUSE_VERSION"
+# fi
+
+echo "---> Building gcsfuse v${gcsfuse_version}"
+export GOPATH="${go_dir}"
+go install "github.com/googlecloudplatform/gcsfuse@v${gcsfuse_version}"
+
+echo "---> Installing gcsfuse v${gcsfuse_version}"
+mkdir -p "${gcsfuse_dir}/bin"
+cp "${go_dir}/bin/gcsfuse" "${gcsfuse_dir}/bin"
+
+echo "---> Update profile settings"
+mkdir -p "${gcsfuse_dir}/profile.d"
+cat >"${gcsfuse_dir}/profile.d/google-cloud-gcsfuse.sh" <<-EOF
+	export PATH="\${PATH:+\${PATH}:}${gcsfuse_dir}/bin"
+	export LD_LIBRARY_PATH="${gcsfuse_dir}/lib\${LD_LIBRARY_PATH:+:\${LD_LIBRARY_PATH}}"
+EOF
+
+echo "----> Configuring layer for gcsfuse"
+echo -e '[types]\ncache = true\nlaunch = true' >"${layers_dir}/google-cloud-gcsfuse.toml"

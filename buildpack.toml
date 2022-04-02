@@ -1,0 +1,19 @@
+api = "0.7"
+
+[buildpack]
+  id = "misorobotics/google-cloud-gcsfuse"
+  version = "0.1.0"
+  name = "Google Cloud gcsfuse  Buildpack"
+  description = "Install the Google Cloud SDK tool."
+  keywords = ["gcp"]
+  homepage = "https://github.com/MisoRobotics/buildpack-google-cloud-gcsfuse"
+
+  [[buildpack.licenses]]
+    type = "Apache-2.0"
+    uri = "https://github.com/MisoRobotics/buildpack-google-cloud-gcsfuse/blob/main/LICENSE"
+
+[metadata]
+  include-files = ["bin/build", "bin/detect", "buildpack.toml"]
+
+[[stacks]]
+  id = "google"
