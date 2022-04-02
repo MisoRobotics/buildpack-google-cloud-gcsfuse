@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -x
 
 set -euo pipefail
 
@@ -16,7 +17,7 @@ build_dir="$(realpath "${layers_dir}/..")"
 echo "---> Google Cloud gcsfuse Buildpack"
 
 mkdir -p "${cache_dir}"
-echo -e '[types]\ncache = true\nlaunch = false' >"${layers_dir}/cache.toml"
+echo -e '[types]\ncache = true' >"${layers_dir}/cache.toml"
 
 #########################
 echo "---> Installing golang"
@@ -38,22 +39,21 @@ if [[ -r "${cache_dir}/${local_file}" && "${existing_version}" == "${go_version}
 	echo "Found golang v${existing_version} in cache, skipping download"
 else
 	echo "---> Downloading golang v${go_version} to cache"
-	curl -fSo "${cache_dir}/${local_file}" "https://go.dev/dl/go${go_version}.linux-amd64.tar.gz"
+	curl -fSLo "${cache_dir}/${local_file}" "https://go.dev/dl/go${go_version}.linux-amd64.tar.gz"
 	echo -n "${go_version}" >"${cache_dir}/GO_VERSION"
 fi
 
 echo "---> Unarchiving golang v${go_version}"
-tar zxf "${cache_dir}/${local_file}" --directory "${go_dir}" --strip-components=1
+tar -xzf "${cache_dir}/${local_file}" -C "${go_dir}" --strip-components=1
 export GOROOT="${go_dir}"
 export PATH="${PATH:+${PATH}:}${go_dir}/bin"
 
-echo "---> Installing golang v${go_version}"
-"${go_dir}/install.sh" --usage-reporting=false --path-update=false --bash-completion=false
+echo "----> Configuring layer for go"
+echo -e '[types]\nbuild = true\ncache = true' >"${layers_dir}/go.toml"
 
 #######################
 
 echo "---> Installing gcsfuse"
-
 default_gcsfuse_version="0.40.0"
 if [ -r "${env_dir}/GCSFUSE_VERSION" ]; then
 	gcsfuse_version="$(cat "${env_dir}/GCSFUSE_VERSION")"
@@ -74,16 +74,19 @@ fi
 # 	echo -n "${gcsfuse_version}" >"${cache_dir}/GCSFUSE_VERSION"
 # fi
 
-echo "---> Installing gcsfuse v${gcsfuse_version}"
-export GOPATH="${gcsfuse_dir}"
-go install github.com/googlecloudplatform/gcsfuse
+echo "---> Building gcsfuse v${gcsfuse_version}"
+export GOPATH="${go_dir}"
+go install "github.com/googlecloudplatform/gcsfuse@v${gcsfuse_version}"
 
-echo "----> Configure layer for gcsfuse"
-echo -e '[types]\nlaunch = true' >"${layers_dir}/google-cloud-gcsfuse.toml"
+echo "---> Installing gcsfuse v${gcsfuse_version}"
+mkdir "${gcsfuse_dir}/bin"
+cp "${go_dir}/bin/gcsfuse" "${gcsfuse_dir}/bin"
+
+echo "----> Configuring layer for gcsfuse"
+echo -e '[types]\ncache = true\nlaunch = true' >"${layers_dir}/google-cloud-gcsfuse.toml"
 
 echo "---> Update profile settings"
-mkdir -p "${layers_dir}/build/profile.d"
-echo -e '[types]\nlaunch = true\nbuild = true' >"${layers_dir}/build.toml"
-cat >"${layers_dir}/build/profile.d/google-cloud-gcsfuse.sh" <<-EOF
+mkdir -p "${gcsfuse_dir}/profile.d"
+cat >"${gcsfuse_dir}/profile.d/google-cloud-gcsfuse.sh" <<-EOF
 	export PATH="${PATH:+${PATH}:}${gcsfuse_dir}/bin"
 EOF
