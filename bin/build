@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+layers_dir="$1"
+env_dir="$2/env"
+plan_dir="$3"
+
+go_dir="${layers_dir}/go"
+gcsfuse_dir="${layers_dir}/google-cloud-gcsfuse"
+mkdir -p "${go_dir}" "${gcsfuse_dir}"
+
+cache_dir="${layers_dir}/cache"
+build_dir="$(realpath "${layers_dir}/..")"
+
+echo "---> Google Cloud gcsfuse Buildpack"
+
+mkdir -p "${cache_dir}"
+echo -e '[types]\ncache = true\nlaunch = false' >"${layers_dir}/cache.toml"
+
+#########################
+echo "---> Installing golang"
+
+default_go_version="1.18"
+if [ -r "${env_dir}/GO_VERSION" ]; then
+	go_version="$(cat "${env_dir}/GO_VERSION")"
+else
+	go_version="${default_go_version}"
+fi
+
+existing_version="none"
+if [ -r "${cache_dir}/GO_VERSION" ]; then
+	existing_version="$(cat "${cache_dir}/GO_VERSION")"
+fi
+
+local_file="go.linux-amd64.tar.gz"
+if [[ -r "${cache_dir}/${local_file}" && "${existing_version}" == "${go_version}" ]]; then
+	echo "Found golang v${existing_version} in cache, skipping download"
+else
+	echo "---> Downloading golang v${go_version} to cache"
+	curl -fSo "${cache_dir}/${local_file}" "https://go.dev/dl/go${go_version}.linux-amd64.tar.gz"
+	echo -n "${go_version}" >"${cache_dir}/GO_VERSION"
+fi
+
+echo "---> Unarchiving golang v${go_version}"
+tar zxf "${cache_dir}/${local_file}" --directory "${go_dir}" --strip-components=1
+export GOROOT="${go_dir}"
+export PATH="${PATH:+${PATH}:}${go_dir}/bin"
+
+echo "---> Installing golang v${go_version}"
+"${go_dir}/install.sh" --usage-reporting=false --path-update=false --bash-completion=false
+
+#######################
+
+echo "---> Installing gcsfuse"
+
+default_gcsfuse_version="0.40.0"
+if [ -r "${env_dir}/GCSFUSE_VERSION" ]; then
+	gcsfuse_version="$(cat "${env_dir}/GCSFUSE_VERSION")"
+else
+	gcsfuse_version="${default_gcsfuse_version}"
+fi
+
+# existing_version="none"
+# if [ -r "${cache_dir}/GCSFUSE_VERSION" ]; then
+# 	existing_version="$(cat "${cache_dir}/GCSFUSE_VERSION")"
+# fi
+
+# if [[ -r "${cache_dir}/${local_file}" && "${existing_version}" == "${gcsfuse_version}" ]]; then
+# 	echo "Found gcsfuse v${existing_version} in cache, skipping download"
+# else
+# 	echo "---> Downloading google-cloud-sdk v${gcsfuse_version} to cache"
+# 	curl -fSo "${cache_dir}/${local_file}" "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/${download_file}"
+# 	echo -n "${gcsfuse_version}" >"${cache_dir}/GCSFUSE_VERSION"
+# fi
+
+echo "---> Installing gcsfuse v${gcsfuse_version}"
+export GOPATH="${gcsfuse_dir}"
+go install github.com/googlecloudplatform/gcsfuse
+
+echo "----> Configure layer for gcsfuse"
+echo -e '[types]\nlaunch = true' >"${layers_dir}/google-cloud-gcsfuse.toml"
+
+echo "---> Update profile settings"
+mkdir -p "${layers_dir}/build/profile.d"
+echo -e '[types]\nlaunch = true\nbuild = true' >"${layers_dir}/build.toml"
+cat >"${layers_dir}/build/profile.d/google-cloud-gcsfuse.sh" <<-EOF
+	export PATH="${PATH:+${PATH}:}${gcsfuse_dir}/bin"
+EOF
